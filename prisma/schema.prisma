@@ -1,0 +1,40 @@
+// VCB Video Agent — backend database.
+// Chỉ BE giữ Postgres; VCB_AI vẫn lưu job/catalog dạng file và được BE gọi qua HTTP.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum UserRole {
+  admin // toàn quyền, quản trị người dùng
+  manager // quản lý lô sản xuất, xem báo cáo
+  editor // dựng và sửa video trong Studio
+  reviewer // duyệt G2: PASS / sửa / mở CapCut / loại
+}
+
+model User {
+  id           BigInt     @id @default(autoincrement())
+  email        String     @unique
+  passwordHash String     @map("password_hash")
+  fullName     String?    @map("full_name")
+  phoneNumber  String?    @map("phone_number")
+  avatarUrl    String?    @map("avatar_url")
+  roles        UserRole[] @default([editor])
+  isActive     Boolean    @default(true) @map("is_active")
+
+  /// Tăng lên khi logout / đổi mật khẩu / khoá tài khoản để vô hiệu hoá refresh token cũ.
+  tokenVersion Int       @default(0) @map("token_version")
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@index([isActive])
+  @@map("users")
+}
