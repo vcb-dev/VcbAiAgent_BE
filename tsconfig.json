@@ -12,6 +12,9 @@
     "rootDir": "./src",
     "baseUrl": "./",
     "incremental": true,
+    // Để cache trong dist/: nest-cli có deleteOutDir nên cache bị xoá cùng lúc.
+    // Nếu để ngoài, tsc tưởng đã emit xong và không dựng lại dist → "Cannot find module dist/main".
+    "tsBuildInfoFile": "./dist/tsconfig.tsbuildinfo",
     "skipLibCheck": true,
     "strictNullChecks": true,
     "forceConsistentCasingInFileNames": true,
