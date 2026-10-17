@@ -22,7 +22,7 @@ export class CookieAuthService {
     const frontendUrl = this.config.get<string>('FRONTEND_URL', '');
     const isHttps = frontendUrl.startsWith('https://');
     const secure = this.config.get<string>('COOKIE_SECURE', isHttps ? 'true' : 'false') === 'true';
-    // Dev chạy qua Vite proxy nên cùng origin → 'lax' là đủ và không cần HTTPS.
+    // http://localhost:* được coi là same-site dù khác cổng, nên 'lax' đủ cho FE :5173 → BE :3011.
     return { secure, sameSite: isHttps ? 'none' : 'lax' };
   }
 

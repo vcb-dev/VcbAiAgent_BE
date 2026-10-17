@@ -1,4 +1,17 @@
-import { Body, Controller, Get, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import type { Response } from 'express';
@@ -7,6 +20,17 @@ import { Roles } from '../common/decorators/roles.decorator';
 import { SkipEnvelope } from '../common/decorators/skip-envelope.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { AiClientService } from './ai-client.service';
+
+const MAX_VO_UPLOAD = 25 * 1024 * 1024;
+
+/** Phần multer cần dùng. Khai tại chỗ để khỏi thêm @types/multer chỉ cho một route. */
+type UploadedAudio = { buffer: Uint8Array<ArrayBuffer>; originalname: string; mimetype: string };
+
+function toForm(file: UploadedAudio): FormData {
+  const form = new FormData();
+  form.append('file', new Blob([file.buffer], { type: file.mimetype }), file.originalname);
+  return form;
+}
 
 /**
  * Gateway sang VCB_AI. BE giữ xác thực + phân quyền; AI service không biết gì về user,
@@ -24,10 +48,17 @@ export class StudioController {
     return this.ai.request('get', '/bootstrap');
   }
 
+  @Get('voices')
+  @ApiOperation({ summary: 'Giọng nhân bản có trên tài khoản MiniMax' })
+  voices() {
+    return this.ai.request('get', '/voices');
+  }
+
   @Post('jobs')
   @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
   createJob(@Body() body: unknown) {
-    return this.ai.request('post', '/jobs', { data: body });
+    // Dựng kèm giọng nhân bản thì phải chờ học giọng và đọc hết kịch bản.
+    return this.ai.request('post', '/jobs', { data: body, timeoutMs: 300_000 });
   }
 
   @Get('jobs/:jobId')
@@ -48,10 +79,112 @@ export class StudioController {
     return this.ai.request('post', path, { data: body });
   }
 
+  @Post('jobs/:jobId/parts/:partId/craft-step')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Đổi công đoạn chế tác của một khối rồi bốc source mới' })
+  craftStep(@Param('jobId') jobId: string, @Param('partId') partId: string, @Body() body: unknown) {
+    const path = `/jobs/${encodeURIComponent(jobId)}/parts/${encodeURIComponent(partId)}/craft-step`;
+    return this.ai.request('post', path, { data: body });
+  }
+
+  @Post('jobs/:jobId/craft-plan')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Đổi cả dãy công đoạn chế tác theo footage A4' })
+  craftPlan(@Param('jobId') jobId: string, @Body() body: unknown) {
+    return this.ai.request('post', `/jobs/${encodeURIComponent(jobId)}/craft-plan`, { data: body });
+  }
+
+  @Post('voice-uploads')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Cất bản thu lên máy chủ trước khi dựng, để nghe lại' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VO_UPLOAD } }))
+  voiceStore(@UploadedFile() file?: UploadedAudio) {
+    if (!file) throw new BadRequestException('Thiếu file âm thanh');
+    return this.ai.request('post', '/voice-uploads', { data: toForm(file), timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/voice-upload/apply')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  jobVoiceApply(@Param('jobId') jobId: string, @Body() body: unknown) {
+    const path = `/jobs/${encodeURIComponent(jobId)}/voice-upload/apply`;
+    return this.ai.request('post', path, { data: body, timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/voice-upload')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Tải bản thu cả kịch bản, dùng làm lời đọc cho toàn video' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VO_UPLOAD } }))
+  jobVoiceUpload(@Param('jobId') jobId: string, @UploadedFile() file?: UploadedAudio) {
+    if (!file) throw new BadRequestException('Thiếu file âm thanh');
+    const path = `/jobs/${encodeURIComponent(jobId)}/voice-upload`;
+    return this.ai.request('post', path, { data: toForm(file), timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/voice-clone/apply')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Học giọng trong bản thu đã cất, rồi đọc lại cả kịch bản' })
+  jobVoiceCloneApply(@Param('jobId') jobId: string, @Body() body: unknown) {
+    const path = `/jobs/${encodeURIComponent(jobId)}/voice-clone/apply`;
+    return this.ai.request('post', path, { data: body, timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/voice-clone')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Tải mẫu giọng lên và cho giọng đó đọc kịch bản' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VO_UPLOAD } }))
+  jobVoiceClone(@Param('jobId') jobId: string, @UploadedFile() file?: UploadedAudio) {
+    if (!file) throw new BadRequestException('Thiếu file âm thanh');
+    const path = `/jobs/${encodeURIComponent(jobId)}/voice-clone`;
+    return this.ai.request('post', path, { data: toForm(file), timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/voice-clone/clear')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  jobVoiceCloneClear(@Param('jobId') jobId: string) {
+    const path = `/jobs/${encodeURIComponent(jobId)}/voice-clone/clear`;
+    return this.ai.request('post', path, { timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/voice-upload/clear')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  jobVoiceUploadClear(@Param('jobId') jobId: string) {
+    const path = `/jobs/${encodeURIComponent(jobId)}/voice-upload/clear`;
+    return this.ai.request('post', path, { timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/parts/:partId/voice-upload')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Tải file ghi âm lên làm lời đọc của một phần' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VO_UPLOAD } }))
+  voiceUpload(
+    @Param('jobId') jobId: string,
+    @Param('partId') partId: string,
+    @UploadedFile() file?: UploadedAudio,
+  ) {
+    if (!file) throw new BadRequestException('Thiếu file âm thanh');
+    const path = `/jobs/${encodeURIComponent(jobId)}/parts/${encodeURIComponent(partId)}/voice-upload`;
+    // Chuyển mã rồi dựng lại video nên lâu hơn các lời gọi khác.
+    return this.ai.request('post', path, { data: toForm(file), timeoutMs: 300_000 });
+  }
+
+  @Post('jobs/:jobId/parts/:partId/voice-upload/clear')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  voiceUploadClear(@Param('jobId') jobId: string, @Param('partId') partId: string) {
+    const path = `/jobs/${encodeURIComponent(jobId)}/parts/${encodeURIComponent(partId)}/voice-upload/clear`;
+    return this.ai.request('post', path, { timeoutMs: 300_000 });
+  }
+
   @Patch('jobs/:jobId/settings')
   @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
   settings(@Param('jobId') jobId: string, @Body() body: unknown) {
     return this.ai.request('patch', `/jobs/${encodeURIComponent(jobId)}/settings`, { data: body });
+  }
+
+  @Patch('clips/:clipId')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Gắn công đoạn chế tác cho một clip đã kéo về' })
+  labelClip(@Param('clipId') clipId: string, @Body() body: unknown) {
+    return this.ai.request('patch', `/clips/${encodeURIComponent(clipId)}`, { data: body });
   }
 
   @Post('jobs/:jobId/undo')

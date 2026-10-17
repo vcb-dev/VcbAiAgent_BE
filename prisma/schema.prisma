@@ -38,3 +38,108 @@ model User {
   @@index([isActive])
   @@map("users")
 }
+
+// ---------------------------------------------------------------------------
+// Kho footage trên ổ NAS.
+//
+// Ổ mạng chậm nên Studio không duyệt thẳng ổ: VCB_AI quét, BE lưu lại ở đây,
+// web đọc từ đây. Dữ liệu là bản sao của ổ — xoá đi đồng bộ lại là có.
+// ---------------------------------------------------------------------------
+
+model NasCategory {
+  /// Số thứ tự thư mục trên ổ ('1' = Nhẫn), dùng chung cho cả nhánh Visual và Chế tác.
+  code      String       @id
+  label     String
+  products  NasProduct[]
+  syncedAt  DateTime?    @map("synced_at") @db.Timestamptz(6)
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("nas_categories")
+}
+
+model NasProduct {
+  id           BigInt      @id @default(autoincrement())
+  categoryCode String      @map("category_code")
+  category     NasCategory @relation(fields: [categoryCode], references: [code], onDelete: Cascade)
+  sku          String
+  name         String
+  /// Thư mục visual trên ổ. Thường một, nhưng một mã có thể được quay làm nhiều đợt
+  /// và đặt tên khác nhau — tất cả đều là nguồn cảnh sản phẩm hợp lệ.
+  folders      String[]
+  paths        String[]
+
+  craftSteps NasCraftStep[]
+  /// Null = chưa quét công đoạn lần nào; quét theo nhu cầu lúc người dùng chọn sản phẩm.
+  craftSyncedAt DateTime? @map("craft_synced_at") @db.Timestamptz(6)
+  /// Null = clip vẫn nằm trên ổ mạng, phải kéo về trước khi dựng được.
+  footageReadyAt DateTime? @map("footage_ready_at") @db.Timestamptz(6)
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([categoryCode, sku])
+  @@index([sku])
+  @@map("nas_products")
+}
+
+model NasCraftStep {
+  id        BigInt     @id @default(autoincrement())
+  productId BigInt     @map("product_id")
+  product   NasProduct @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Buổi quay ('260701_N0006_..._DTA01'). Mỗi thợ đánh số công đoạn lại từ đầu nên
+  /// thứ tự chỉ có nghĩa trong phạm vi một buổi.
+  shoot      String
+  /// Số thợ đánh trước tên thư mục, quyết định thứ tự công đoạn trong tuyến A4.
+  orderIndex Int?    @map("order_index")
+  name       String
+  folder     String
+  /// Mã công đoạn chuẩn hoá ('danh_bong'), null khi tên thư mục không khớp từ điển.
+  step       String?
+  clips      Int     @default(0)
+  path       String
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@unique([productId, shoot, folder])
+  @@index([productId, shoot, orderIndex])
+  @@map("nas_craft_steps")
+}
+
+model NasHuykAction {
+  id         BigInt  @id @default(autoincrement())
+  orderIndex Int?    @map("order_index")
+  name       String
+  folder     String  @unique
+  step       String?
+  clips      Int     @default(0)
+  path       String
+
+  syncedAt  DateTime @default(now()) @map("synced_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("nas_huyk_actions")
+}
+
+enum NasSyncStatus {
+  running
+  success
+  failed
+}
+
+model NasSyncRun {
+  id    BigInt        @id @default(autoincrement())
+  /// 'products' | 'huyk' | 'craft:<sku>'
+  scope String
+  status NasSyncStatus @default(running)
+  /// Số bản ghi ghi được, để đối chiếu nhanh giữa hai lần quét.
+  items  Int           @default(0)
+  error  String?
+
+  startedAt  DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt DateTime? @map("finished_at") @db.Timestamptz(6)
+
+  @@index([scope, startedAt])
+  @@map("nas_sync_runs")
+}

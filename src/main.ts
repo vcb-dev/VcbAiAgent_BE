@@ -7,6 +7,7 @@ import cors from 'cors';
 import express from 'express';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { attachMediaGateway } from './media-gateway';
 
 // Prisma trả id dạng BigInt mà JSON.stringify không xử lý được.
 (BigInt.prototype as unknown as { toJSON(): string }).toJSON = function () {
@@ -40,6 +41,8 @@ async function bootstrap() {
       optionsSuccessStatus: 204,
     }),
   );
+
+  attachMediaGateway(server);
 
   const app = await NestFactory.create(AppModule, new (await import('@nestjs/platform-express')).ExpressAdapter(server));
   const config = app.get(ConfigService);

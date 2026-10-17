@@ -9,6 +9,7 @@ import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 import jwtConfig from './config/jwt.config';
 import { HealthController } from './health.controller';
+import { NasModule } from './nas/nas.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { StudioModule } from './studio/studio.module';
 import { UsersModule } from './users/users.module';
@@ -21,6 +22,7 @@ import { UsersModule } from './users/users.module';
     AuthModule,
     UsersModule,
     StudioModule,
+    NasModule,
   ],
   controllers: [HealthController],
   providers: [

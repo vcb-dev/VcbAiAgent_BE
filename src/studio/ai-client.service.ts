@@ -30,7 +30,7 @@ export class AiClientService {
   async request<T>(
     method: 'get' | 'post' | 'patch',
     path: string,
-    options: { data?: unknown; responseType?: 'json' | 'stream' } = {},
+    options: { data?: unknown; responseType?: 'json' | 'stream'; timeoutMs?: number } = {},
   ): Promise<T> {
     try {
       const res = await this.http.request<T>({
@@ -38,6 +38,8 @@ export class AiClientService {
         url: path,
         data: options.data,
         responseType: options.responseType ?? 'json',
+        // Quét ổ mạng lâu hơn hẳn mọi lời gọi khác nên cho phép nới riêng.
+        ...(options.timeoutMs ? { timeout: options.timeoutMs } : {}),
       });
       return res.data;
     } catch (e) {
