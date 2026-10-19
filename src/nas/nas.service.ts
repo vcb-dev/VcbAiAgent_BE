@@ -15,6 +15,34 @@ const CATEGORY_LABELS: Record<string, string> = {
 const CRAFT_SLOTS = 4;
 const HUYK_SLOTS = 2;
 
+/** Thứ tự quy trình kim hoàn — khớp CRAFT_FORMULA bên FE / VCB_AI. */
+const STEP_ORDER = [
+  'thiet_ke',
+  'chuan_bi_nguyen_lieu',
+  'nung_nau',
+  'do_khuon',
+  'dap_can',
+  'tao_dang',
+  'cua_cat',
+  'han',
+  'dua_mai',
+  'khoan',
+  'gan_da_chu',
+  'dinh_da',
+  'lam_sach',
+  'danh_bong',
+  'khac_laser',
+  'hoan_thien',
+] as const;
+
+/** 4 ô chế tác A4 chia đều quy trình, từ khâu đầu tới khâu cuối. */
+const CRAFT_FORMULA: readonly (readonly string[])[] = [
+  ['thiet_ke', 'chuan_bi_nguyen_lieu', 'nung_nau'],
+  ['do_khuon', 'dap_can', 'tao_dang', 'cua_cat'],
+  ['han', 'dua_mai', 'khoan', 'gan_da_chu'],
+  ['dinh_da', 'lam_sach', 'danh_bong', 'khac_laser', 'hoan_thien'],
+];
+
 type ScannedProduct = { sku: string; name: string; folders: string[]; paths: string[] };
 type ScannedCategory = { id: string; label: string; products: ScannedProduct[] };
 type ScannedStep = {
@@ -129,10 +157,9 @@ export class NasService {
   /**
    * Kế hoạch tuyến A4 cho một mã: 4 công đoạn chế tác xen 2 cảnh HuyK.
    *
-   * Công đoạn được bốc ngẫu nhiên từ kho trong DB chứ không bắt editor tự chọn giữa vài
-   * chục thư mục. Chọn một buổi quay rồi chia quy trình của buổi đó thành 4 chặng và bốc
-   * mỗi chặng một công đoạn — như vậy video đi từ khâu đầu tới khâu cuối, thay vì rơi vào
-   * bốn công đoạn sát nhau.
+   * Bốn ô chế tác luôn theo thứ tự quy trình (công thức 4 nhóm), không bốc theo số
+   * thư mục trên ổ — số folder hay lệch so với khâu thật (cưa trước nung, …).
+   * HuyK vẫn bốc ngẫu nhiên trong kho chung.
    */
   async a4Plan(categoryCode: string, sku: string) {
     const [steps, actions] = await Promise.all([
@@ -140,15 +167,14 @@ export class NasService {
       this.huykActions(),
     ]);
 
+    const craft = formulaPick(steps, CRAFT_SLOTS);
     const shoots = [...new Set(steps.map((s) => s.shoot))];
-    const shoot = pickOne(shoots);
-    const inShoot = steps.filter((s) => s.shoot === shoot);
 
     return {
       sku,
-      shoot: shoot ?? null,
+      shoot: craft[0]?.shoot ?? pickOne(shoots) ?? null,
       shoots: shoots.length,
-      craft: spreadPick(inShoot, CRAFT_SLOTS),
+      craft,
       huyk: pickMany(actions, HUYK_SLOTS),
     };
   }
@@ -414,18 +440,49 @@ function pickMany<T>(items: T[], count: number): T[] {
   return out;
 }
 
+function stepRank(step: string | null | undefined): number {
+  const i = STEP_ORDER.indexOf(step as (typeof STEP_ORDER)[number]);
+  return i < 0 ? 999 : i;
+}
+
 /**
- * Chia danh sách thành `count` chặng đều nhau rồi bốc mỗi chặng một phần tử, giữ nguyên
- * thứ tự gốc. Ít hơn `count` phần tử thì lấy hết.
+ * Bốc đúng `count` thư mục theo công thức 4 nhóm, luôn trả về theo thứ tự quy trình.
+ * Trong một nhóm, nếu có nhiều thư mục thì bốc ngẫu nhiên để lần "đổi cảnh" khác folder,
+ * nhưng ô 1 vẫn là khâu đầu, ô 4 vẫn là khâu cuối.
  */
-function spreadPick<T>(items: T[], count: number): T[] {
-  if (items.length <= count) return items;
-  const size = items.length / count;
-  return Array.from({ length: count }, (_, i) => {
-    const start = Math.floor(i * size);
-    const end = Math.max(start + 1, Math.floor((i + 1) * size));
-    return items[start + Math.floor(Math.random() * (end - start))];
-  });
+function formulaPick(
+  items: Array<{
+    shoot?: string;
+    orderIndex?: number | null;
+    name: string;
+    folder: string;
+    step: string | null;
+    clips: number;
+    path: string;
+  }>,
+  count: number,
+): typeof items {
+  if (items.length <= count) {
+    return [...items].sort(
+      (a, b) =>
+        stepRank(a.step) - stepRank(b.step) || (a.orderIndex ?? 99) - (b.orderIndex ?? 99),
+    );
+  }
+  const byProcess = [...items].sort(
+    (a, b) => stepRank(a.step) - stepRank(b.step) || (a.orderIndex ?? 99) - (b.orderIndex ?? 99),
+  );
+  const used = new Set<string>();
+  const out: typeof items = [];
+  for (const wanted of CRAFT_FORMULA.slice(0, count)) {
+    const free = byProcess.filter((f) => f.path && !used.has(f.path));
+    const matches = free.filter((f) => f.step && wanted.includes(f.step));
+    const pool = matches.length ? matches : free;
+    if (!pool.length) continue;
+    const hit = pool[Math.floor(Math.random() * pool.length)];
+    used.add(hit.path);
+    out.push(hit);
+  }
+  return out;
 }
 
 function serializeRun(run: {

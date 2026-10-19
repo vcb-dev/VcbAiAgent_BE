@@ -54,6 +54,21 @@ export class StudioController {
     return this.ai.request('get', '/voices');
   }
 
+  @Get('music')
+  @ApiOperation({ summary: 'Danh sách nhạc nền trên volume AI' })
+  music() {
+    return this.ai.request('get', '/music');
+  }
+
+  @Post('music-uploads')
+  @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
+  @ApiOperation({ summary: 'Tải bài nhạc nền lên volume (mp3/wav/m4a), không lưu database' })
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_VO_UPLOAD } }))
+  musicStore(@UploadedFile() file?: UploadedAudio) {
+    if (!file) throw new BadRequestException('Thiếu file nhạc');
+    return this.ai.request('post', '/music-uploads', { data: toForm(file), timeoutMs: 120_000 });
+  }
+
   @Post('jobs')
   @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
   createJob(@Body() body: unknown) {
@@ -191,6 +206,19 @@ export class StudioController {
   @Roles(UserRole.admin, UserRole.manager, UserRole.editor)
   undo(@Param('jobId') jobId: string) {
     return this.ai.request('post', `/jobs/${encodeURIComponent(jobId)}/undo`);
+  }
+
+  @Get('jobs/:jobId/export')
+  @SkipEnvelope()
+  @ApiOperation({ summary: 'Tải MP4 đã mix nhạc/âm lượng hiện tại (không dựng lại hình)' })
+  async downloadExport(@Param('jobId') jobId: string, @Res() res: Response) {
+    const stream = await this.ai.request<Readable>('get', `/jobs/${encodeURIComponent(jobId)}/export`, {
+      responseType: 'stream',
+      timeoutMs: 120_000,
+    });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Content-Disposition', `attachment; filename="VCB_${jobId}.mp4"`);
+    stream.pipe(res);
   }
 
   @Get('jobs/:jobId/package')
